@@ -3,7 +3,7 @@ import { useAppStore } from '../store/AppStore'
 import { Icon, Field, ConfirmDelete } from '../components/ui'
 import { MiniChart } from '../components/MiniChart'
 import type { ExerciseEntry, ScoreMode, SetRow, TrackedExercise } from '../lib/trackerTypes'
-import { newExerciseEntry, newSetRow, newTrackedExercise } from '../store/trackerFactories'
+import { combineEntries, mergeSameDayEntries, newExerciseEntry, newSetRow, newTrackedExercise } from '../store/trackerFactories'
 import {
   SCORE_LABELS,
   distinctTypes,
@@ -353,17 +353,34 @@ function ExerciseDetail({
   }, [points, range])
 
   const addEntry = (e: ExerciseEntry) =>
-    mutate((ex) => ({
-      ...ex,
-      entries: [{ ...e, type: canonicalType(e.type, ex.entries) }, ...ex.entries],
-    }))
+    mutate((ex) => {
+      const incoming: ExerciseEntry = { ...e, type: canonicalType(e.type, ex.entries) }
+      const key = incoming.type.trim().toLowerCase()
+      const existing = ex.entries.find(
+        (x) => x.date === incoming.date && x.type.trim().toLowerCase() === key,
+      )
+      // Same day + same measure type folds the new sets into the existing entry.
+      if (existing) {
+        return {
+          ...ex,
+          entries: ex.entries.map((x) =>
+            x.id === existing.id ? combineEntries(x, incoming) : x,
+          ),
+        }
+      }
+      return { ...ex, entries: [incoming, ...ex.entries] }
+    })
   const updateEntry = (e: ExerciseEntry) =>
     mutate((ex) => ({
       ...ex,
-      entries: ex.entries.map((x) =>
-        x.id === e.id
-          ? { ...e, type: canonicalType(e.type, ex.entries.filter((o) => o.id !== e.id)) }
-          : x,
+      // Re-run the same-day/same-type merge so an edit that now collides with
+      // another entry consolidates instead of leaving two on the same day.
+      entries: mergeSameDayEntries(
+        ex.entries.map((x) =>
+          x.id === e.id
+            ? { ...e, type: canonicalType(e.type, ex.entries.filter((o) => o.id !== e.id)) }
+            : x,
+        ),
       ),
     }))
   const deleteEntry = (id: string) =>
@@ -649,7 +666,7 @@ function ExerciseDetail({
                             <Icon name="check" />
                           </button>
                         )}
-                        <div className="ml-auto flex shrink-0 items-center text-slate-400">
+                        <div className="ml-auto flex shrink-0 items-center gap-1 text-slate-400">
                           {g.type && editingType !== g.type && (
                             <button
                               className="btn-ghost px-1.5 py-1"
